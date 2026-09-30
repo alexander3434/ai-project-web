@@ -121,6 +121,9 @@ manual assistant append of the D-04 fact — and `llm/ProviderRoutingPromptExecu
   (250 pre-existing + 49 new/changed-method additions; frozen accounting in §2.4). After the M-06
   defect fix of §6: **BUILD SUCCESSFUL, 303 tests, 0 failures/errors** (+4 guard tests). After the
   user-driven prompt supersession of §7: **BUILD SUCCESSFUL, 304 tests, 0 failures/errors** (+1).
+  After the web-search addition of §8: **BUILD SUCCESSFUL, 43 classes, 319 tests, 0 failures/errors**
+  (+15). After the Mojeek-primary change of §8.1: **BUILD SUCCESSFUL, 43 classes, 321 tests,
+  0 failures/errors** (+2).
 - Frontend: `npm run test` → **8 files, 59 tests passed, 0 failed** (offline, backend stopped, no
   network); `npm run typecheck` → exit 0; `npm run build` → exit 0; `npm run lint` → exit 0.
 - Secrets: 0 matches in both projects; the frontend writes only `ai-turbo-chat-history`; no new
@@ -241,3 +244,101 @@ Known stale doc sample (not changed, outside the requested scope): `README.md:36
 illustrative `stage=deepseek-request` log line quoting the old chat prompt
 ("Ты — ассистент по погоде и заказам на пролив (заправку)…"); the line is a truncated sample,
 not an assertion, and would need a one-line wording refresh.
+
+## 8. User-driven requirements supersession — web search for any-topic questions
+
+A second user request (delivered through the coordinator) supersedes the *answer-from-your-own-
+knowledge* part of §7: a question like «когда матч Зенит—Оренбург?» must produce a real Internet
+search, not "I do not do schedules", while the weather and fueling tools keep working. The chat
+therefore gets a third tool, `web_search` (DuckDuckGo HTML search, no API key), used by the model
+for fresh/external facts.
+
+Changes:
+
+- `src/main/kotlin/com/aiturbo/tools/WebSearchTool.kt` (new) — Koog `SimpleTool<WebSearchArgs>`
+  (`name`/`description` from the new JSON resource): `GET` the DDG HTML endpoint through the shared
+  Ktor `HttpClient` with a browser user agent, parse up to `maxResults` results into
+  `1. TITLE — URL — snippet` lines (≤ 2 000 chars total, snippets ≤ 300), never throws; 0 results
+  and 0 reachable endpoints return the Russian messages «Поиск не дал результатов.» /
+  «Веб-поиск временно недоступен.». Parsing lives in the pure `parseResults(html, max)` plus
+  `decodeHtmlEntities`/`looksLikeAntiBotPage`; both documented shapes are handled — `html`
+  (`result__a`/`result__snippet`) and `lite` (`result-link`/`result-snippet`) — and result links
+  are resolved from the URL-encoded `uddg` parameter. The primary endpoint is retried on the lite
+  fallback when it fails **or** returns DuckDuckGo's anti-bot page (`anomaly-modal`), so one blocked
+  endpoint does not fail the turn.
+- `src/main/kotlin/com/aiturbo/tools/WebSearchConfig.kt` (new) + `application.conf` `webSearch { }`
+  block: `baseUrl` (default `https://html.duckduckgo.com/html/`), `fallbackBaseUrl` (default
+  `https://lite.duckduckgo.com/lite/`), `maxResults` (5), `timeoutSeconds` (10), each overridable
+  via `WEB_SEARCH_*` (`${?…}` substitution, project style).
+- `src/main/resources/tools/web-search-tool.json` (new) + `ToolSpecLoader.WEB_SEARCH_RESOURCE_PATH`.
+- `chatModule(webSearch = …)` (Application.kt): the new eager tool-spec binding (fail-fast, like the
+  fueling spec), a `WebSearchTool` singleton and the three-tool chat registry; the weather and
+  fueling registries are untouched (still `get_weather`-only / `find_fueling`-only). The shared
+  `HttpClient` gains `install(HttpTimeout)` with **no** global defaults, so only the search request
+  (which asks for its own `requestTimeoutMillis`) is bounded and the weather client is unaffected.
+- `CHAT_SYSTEM_PROMPT` gains the rule: for answers needing fresh or external facts (news, matches,
+  schedules, events, prices) the model MUST call `web_search` and build the answer on its result;
+  the weather, fueling, GUID and "use previous messages" rules are unchanged.
+
+Deviations inside this task (recorded, not silent):
+
+- **The live HTML could not be re-verified from this machine.** A single `curl` check of both
+  endpoints (browser UA, 2026-09-30) returned HTTP **202** with DuckDuckGo's `anomaly-modal` anti-bot
+  page — the documented `result__a`/`result__snippet` markup was not reproducible here. The parser is
+  therefore written against the shapes given in the task (both endpoints), unit-tested on sample
+  pages, and the anti-bot page is recognised explicitly so it triggers the fallback instead of being
+  reported as "no results". No live parsing was asserted anywhere.
+- **Timeout mechanism:** Ktor's per-request `HttpTimeout` capability is used instead of a coroutine
+  `withTimeout` (which is unusable here: under `runTest` + `MockEngine` the virtual clock jumps to
+  the timeout before the mocked engine answers). `MockEngine` ignores Ktor timeouts, so the 10 s
+  budget has no dedicated unit test; the failure branch it feeds (`fetch` → `null` →
+  «Веб-поиск временно недоступен.») is covered by the HTTP-error test.
+- `fallbackBaseUrl` was added to `WebSearchConfig` (the task named only `baseUrl`, `maxResults`,
+  `timeoutSeconds`) so the requested lite fallback is configurable and testable.
+- `WebSearchConfigTest` (3 tests) is an addition in project style (every other config has its own
+  test file); it was not in the requested list.
+
+Tests (all offline, `MockEngine`): `WebSearchToolTest` (10) — sample-page parsing (titles, decoded
+`uddg` URLs, snippets incl. the table shape), lite shape, limit, entities and anti-bot detection,
+numbered rendering + query/UA of the request, no-results, HTTP failure, anti-bot → fallback,
+blank query, output/snippet caps; `WebSearchConfigTest` (3); `ToolSpecTest` (+2, the resource);
+`KoogChatAgentTest` (the §7 test replaced by "a general question triggers the web_search tool call
+and streams its result"); `ChatChainIntegrationTest` and `ChatModulesTest` moved to the three-tool
+registry (`tools_count=3`, tool list `get_weather, find_fueling, web_search`).
+
+Verdict: `./gradlew test` → **BUILD SUCCESSFUL**, 43 classes, **319 tests, 0 failures, 0 errors,
+0 skipped** (304 after §7; +10 tool, +3 config, +2 spec; one chat test replaced 1:1).
+
+Known stale doc samples (unchanged, outside the requested scope): `README.md:360`/`:364` show chat
+`stage=deepseek-request` samples with `tools_count=2` and the pre-§7 prompt; they are truncated
+illustrative excerpts, not assertions.
+
+### 8.1 Mojeek added as the primary source (same round)
+
+Live re-verification by the coordinator found all DuckDuckGo endpoints (html and lite) and SearXNG
+serving anti-bot pages from this machine, with Mojeek answering HTTP 200, so Mojeek became the
+primary search source. Change (same round, same scope):
+`WebSearchTool.search` now walks **Mojeek → DDG html → DDG lite** and skips a source that fails,
+answers an anti-bot page or yields no parseable result; the "unavailable"/"no results" messages and
+the parser's DDG shapes are unchanged. `parseResults` now selects the shape by its link class
+(`ob` for Mojeek — title = link text, snippet = `p.s`, absolute hrefs —, `result__a` for the DDG
+html endpoint, `result-link` for lite) so the generic `s` snippet class of Mojeek cannot collide
+with the DDG markups. `looksLikeAntiBotPage` also recognises Mojeek's captcha page (HTTP 200 with a
+bare `<title>Captcha`). `WebSearchConfig` gained `mojeekBaseUrl` (default
+`https://www.mojeek.com/search`, override `WEB_SEARCH_MOJEEK_BASE_URL`) and the `webSearch { }`
+block gained the matching key.
+
+Deviation (recorded): **the live Mojeek markup could not be confirmed either.** Four `curl` probes
+of `https://www.mojeek.com/search?q=…` with browser user agents (RU and EN queries, Chrome/Firefox
+UAs) all returned HTTP 200 with `<title>Captcha` — Mojeek rate-limits this machine as well. The
+parser therefore follows the classic `a.ob` / `p.s` markup named in the task, is unit-tested on a
+sample page, and the captcha page is detected explicitly so a rate-limited Mojeek falls through to
+the DDG chain instead of producing an empty answer. No live parsing is claimed.
+
+Tests: `WebSearchToolTest` +2 (Mojeek sample-page parsing; Mojeek is the primary and its numbered
+result is rendered), and the chain tests were re-pointed at the three-source order (captcha → DDG
+html fallback; all sources empty → no-results with 3 requests; anti-bot on one source → next source).
+`WebSearchConfigTest` covers the new key, its default and its absence.
+
+Verdict: `./gradlew test` → **BUILD SUCCESSFUL**, 43 classes, **321 tests, 0 failures, 0 errors,
+0 skipped** (319 after the first §8 pass; +2).

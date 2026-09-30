@@ -1,0 +1,286 @@
+/*
+ * Глобальные стили чата (T-18): plain CSS, без фреймворков и CSS-in-JS (CODE_STYLE.md).
+ * В скелете — только имена классов и описание того, что каждый класс обязан задавать;
+ * конкретные свойства дописывает реализация.
+ *
+ * Общая раскладка: страница — колонка на всю высоту окна (#root → .app), шапка фиксированной
+ * высоты, .app__main занимает остаток и не даёт списку сообщений растягивать страницу —
+ * прокручивается только .chat-window. Тёмная/светлая тема не переключается: один набор цветов.
+ *
+ * Соответствие компонентам:
+ *   App.tsx           → .app, .app__header, .app__title, .app__main
+ *   ModelSelector.tsx → .model-selector, .model-selector__label, .model-selector__select
+ *   ChatWindow.tsx    → .chat-window, .chat-window__end
+ *   MessageList.tsx   → .message-list, .typing-indicator, .typing-indicator__dot
+ *   MessageBubble.tsx → .message, .message--user, .message--assistant, .message__text
+ *   ErrorBanner.tsx   → .message--error (в паре с .message)
+ *   ChatInput.tsx     → .chat-input, .chat-input__label, .chat-input__field, .chat-input__send
+ */
+
+/* html, body, #root — сброс отступов, высота 100%, базовый шрифт и цвет фона страницы. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  color: #1f2933;
+  background: #eef2f6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* .app — вертикальная колонка на всю высоту, ограничение ширины читаемой области по центру. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  background: #ffffff;
+  box-shadow: 0 0 24px rgba(31, 41, 51, 0.08);
+}
+
+/* .app__header — шапка: заголовок слева, селектор модели справа, разделитель снизу. */
+.app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid #d9e2ec;
+}
+
+/* .app__title — заголовок «Ai-Turbo Chat»: размер и вес, без внешних отступов. */
+.app__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* .app__main — область чата: колонка, занимает остаток высоты (flex: 1, min-height: 0). */
+.app__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* .model-selector — строка «подпись + селект», выравнивание по центру. */
+.model-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* .model-selector__label — подпись поля, обычный текст без выделения. */
+.model-selector__label {
+  font-size: 14px;
+  color: #52606d;
+}
+
+/* .model-selector__select — системный select: рамка, радиус, паддинги; disabled-состояние не нужно
+   (селект остаётся активным и во время стрима — влияет только на следующий запрос, T-17). */
+.model-selector__select {
+  padding: 6px 10px;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+}
+
+/* .chat-window — прокручиваемая область переписки: overflow-y auto, flex: 1, min-height: 0,
+   внутренние отступы; скроллбар не ломает раскладку. */
+.chat-window {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  scrollbar-gutter: stable;
+}
+
+/* .chat-window__end — «маяк» высотой 0 в конце списка: цель для scrollIntoView({block:'nearest'})
+   при доскролле к свежему сообщению (T-16). */
+.chat-window__end {
+  height: 0;
+}
+
+/* .message-list — вертикальный список сообщений с зазором между записями. */
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* .message — базовый пузырь: максимальная ширина (например 75%), скругление, паддинги,
+   перенос длинных слов (overflow-wrap: anywhere), сохранение переводов строк (white-space: pre-wrap). */
+.message {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* .message--user — выравнивание вправо, акцентный фон: реплика пользователя. */
+.message--user {
+  align-self: flex-end;
+  background: #2f80ed;
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+/* .message--assistant — выравнивание влево, нейтральный фон: ответ ассистента. */
+.message--assistant {
+  align-self: flex-start;
+  background: #f0f4f8;
+  color: #1f2933;
+  border-bottom-left-radius: 4px;
+}
+
+/* .message--error — запись об ошибке (ErrorBanner): приглушённо-красный фон/рамка, message-list
+   позиционирует её так же, как обычное сообщение — ошибку нельзя спутать с ответом (FR-07). */
+.message--error {
+  align-self: flex-start;
+  background: #fdecea;
+  color: #93231a;
+  border: 1px solid #f2b8b2;
+}
+
+/* .message__text — текст внутри пузыря: наследует цвет, не даёт пузырю схлопнуться при пустом
+   content (плейсхолдер во время стрима). */
+.message__text {
+  color: inherit;
+  min-height: 1.45em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* .typing-indicator — индикатор «Ассистент печатает…»: строка под последним пузырём, приглушённый
+   цвет; видим только пока isStreaming (FR-05). */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+  font-size: 14px;
+  color: #7b8794;
+}
+
+/* .typing-indicator__dot — одна из трёх точек индикатора: анимация typing-blink с разными
+   задержками у соседних точек. */
+.typing-indicator__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: typing-blink 1.2s infinite ease-in-out;
+}
+
+.typing-indicator__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator__dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* @keyframes typing-blink — мигание точки индикатора (прозрачность/сдвиг); имя фиксировано,
+   длительность и шаг задаёт реализация. */
+@keyframes typing-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* .chat-input — форма ввода внизу экрана: строка «поле + кнопка», разделитель сверху, паддинги. */
+.chat-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid #d9e2ec;
+  background: #ffffff;
+}
+
+/* .chat-input__field — однострочный input: растягивается на всю доступную ширину (flex: 1),
+   рамка/радиус, focus-visible-обводка; disabled во время стрима приглушает текст и курсор. */
+.chat-input__field {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #bcccdc;
+  border-radius: 10px;
+  font: inherit;
+  color: inherit;
+  background: #ffffff;
+}
+
+.chat-input__field:focus-visible {
+  outline: 2px solid #2f80ed;
+  outline-offset: 1px;
+}
+
+.chat-input__field:disabled {
+  color: #9aa5b1;
+  background: #f5f7fa;
+  cursor: not-allowed;
+}
+
+/* .chat-input__send — кнопка «Отправить»: акцентный фон; :disabled (пустой ввод или стрим) —
+   приглушённая, cursor: default. */
+.chat-input__send {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #2f80ed;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-input__send:disabled {
+  background: #cbd2d9;
+  color: #7b8794;
+  cursor: default;
+}
+
+/* .chat-input__label — подпись поля, визуально скрытая (см. .visually-hidden), нужна для
+   доступности (T-17). */
+.chat-input__label {
+  /* вид задаёт .visually-hidden */
+}
+
+/* .visually-hidden — утилита «скрыто визуально, но доступно скринридеру»: размер 1px, clip, без
+   абсолютного позиционирования за пределами экрана, чтобы фокус не уезжал. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
