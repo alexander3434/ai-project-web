@@ -119,7 +119,8 @@ manual assistant append of the D-04 fact — and `llm/ProviderRoutingPromptExecu
 
 - Backend: `./gradlew test` → **BUILD SUCCESSFUL**, 41 suites, **299 tests, 0 failures, 0 errors**
   (250 pre-existing + 49 new/changed-method additions; frozen accounting in §2.4). After the M-06
-  defect fix of §6: **BUILD SUCCESSFUL, 303 tests, 0 failures/errors** (+4 guard tests).
+  defect fix of §6: **BUILD SUCCESSFUL, 303 tests, 0 failures/errors** (+4 guard tests). After the
+  user-driven prompt supersession of §7: **BUILD SUCCESSFUL, 304 tests, 0 failures/errors** (+1).
 - Frontend: `npm run test` → **8 files, 59 tests passed, 0 failed** (offline, backend stopped, no
   network); `npm run typecheck` → exit 0; `npm run build` → exit 0; `npm run lint` → exit 0.
 - Secrets: 0 matches in both projects; the frontend writes only `ai-turbo-chat-history`; no new
@@ -203,3 +204,40 @@ round is observed (Ollama log line or HTTP error body), the fallback is a ~10-li
 local turn needs a client that waits for it (e.g. `curl -N --max-time 300`, or the browser UI); the
 `Execution exception reported by server!` ERROR line for a disconnected client is Koog logging the
 D-18 marker and is cosmetic (no `outbound`, no 500, no provider-blame line).
+
+## 7. User-driven requirements supersession — general-assistant prompt
+
+After the M-06 run the user reported the chat was too narrow: a general question
+(«когда матч Зенит—Оренбург?») was answered with "not in my competence", because the
+`CHAT_SYSTEM_PROMPT` scoped the assistant to weather and fueling and forbade other answers.
+The user's direct request supersedes that requirement: the chat must converse on **any** topic
+from the model's general knowledge, while still routing weather questions to `get_weather` and
+fueling questions (GUID `8-4-4-4-12` present) to `find_fueling`. This is a scope change of the
+specified behaviour (the spec's prompt wording), not a defect fix, and is recorded here as a
+user-driven deviation.
+
+Changes (frontend untouched):
+
+- `src/main/kotlin/com/aiturbo/chat/KoogChatAgent.kt` — `CHAT_SYSTEM_PROMPT` rewritten as a
+  general Russian assistant prompt: it now opens with "общайся на любые темы", keeps the
+  mandatory `get_weather` / `find_fueling` rules and the "never invent weather/order data" rule,
+  adds "на прочие темы отвечай по своим знаниям", and keeps the GUID-request rule — now scoped
+  to order questions ("если вопрос про заказ, а идентификатора в нём нет"), so a general
+  question no longer triggers a GUID prompt — plus the "use previous messages" and
+  "don't mention tools / no JSON" rules. No code path changed: the tool routing is unchanged
+  (round 0 checks for tool calls, post-tool rounds stream) and the DeepSeek/local paths are
+  untouched.
+- `src/test/kotlin/com/aiturbo/KoogChatAgentTest.kt` — new test `a general question is answered
+  from general knowledge without any tool call` («Когда матч «Зенит» — «Оренбург»?» → one piece,
+  `executeCalls=1`, `streamingCalls=0`, both tool stubs at 0 invocations, the tools still
+  registered in the request). No other test needed changing: the two prompt assertions are
+  self-adapting (`KoogChatAgentTest.kt:152` compares to the `CHAT_SYSTEM_PROMPT` constant;
+  `ChatChainIntegrationTest.kt:275` derives the asserted first line from the same constant).
+
+Verdict: `./gradlew test` → **BUILD SUCCESSFUL**, 41 classes, **304 tests, 0 failures,
+0 errors, 0 skipped**.
+
+Known stale doc sample (not changed, outside the requested scope): `README.md:360` shows an
+illustrative `stage=deepseek-request` log line quoting the old chat prompt
+("Ты — ассистент по погоде и заказам на пролив (заправку)…"); the line is a truncated sample,
+not an assertion, and would need a one-line wording refresh.
